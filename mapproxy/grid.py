@@ -101,7 +101,7 @@ def tile_grid(srs=None, bbox=None, bbox_srs=None, tile_size=(256, 256),
               num_levels=None, min_res=None, max_res=None,
               stretch_factor=1.15, max_shrink_factor=4.0,
               align_with=None, origin='ll', name=None
-              ):
+              ) -> "TileGrid":
     """
     This function creates a new TileGrid.
     """

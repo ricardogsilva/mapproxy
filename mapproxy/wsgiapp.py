@@ -22,6 +22,15 @@ import os
 import re
 import threading
 import time
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Optional,
+    Sequence,
+    Set,
+    Union,
+)
 
 try:
     # time.strptime is thread-safe, but not the first call.
@@ -32,14 +41,24 @@ except ImportError:
 
 from mapproxy.request import Request
 from mapproxy.response import Response
-from mapproxy.config import local_base_config
-from mapproxy.config.loader import load_configuration, ConfigurationError
+from mapproxy.config import (
+    local_base_config,
+    Options,
+)
+from mapproxy.config.loader import load_configuration, ConfigurationError, ProxyConfiguration
+from mapproxy.service.base import Server
+from mapproxy.service.ows import OWSServer
 
 log = logging.getLogger('mapproxy.config')
 log_wsgiapp = logging.getLogger('mapproxy.wsgiapp')
 
 
-def make_wsgi_app(services_conf=None, debug=False, ignore_config_warnings=True, reloader=False):
+def make_wsgi_app(
+        services_conf: Optional[str] = None,
+        debug: bool = False,
+        ignore_config_warnings: bool = True,
+        reloader: bool = False
+) -> Union["MapProxyApp", "ReloaderApp"]:
     """
     Create a MapProxyApp with the given services conf.
 
@@ -70,7 +89,16 @@ def make_wsgi_app(services_conf=None, debug=False, ignore_config_warnings=True, 
 
 
 class ReloaderApp(object):
-    def __init__(self, timestamp_file, make_app_func):
+    timestamp_file: str
+    make_app_func: Callable[[], Union["MapProxyApp", "ReloaderApp"]]
+    app: Union["MapProxyApp", "ReloaderApp"]
+    _app_init_lock: threading.Lock
+
+    def __init__(
+            self,
+            timestamp_file: str,
+            make_app_func: Callable[[], Union["MapProxyApp", "ReloaderApp"]]
+    ):
         self.timestamp_file = timestamp_file
         self.make_app_func = make_app_func
         self.app = make_app_func()
@@ -96,7 +124,7 @@ class ReloaderApp(object):
         return self.app(environ, start_response)
 
 
-def wrap_wsgi_debug(app, conf):
+def wrap_wsgi_debug(app: "MapProxyApp", conf: ProxyConfiguration):
     conf.base_config.debug_mode = True
     try:
         from werkzeug.debug import DebuggedApplication
@@ -111,10 +139,10 @@ def wrap_wsgi_debug(app, conf):
     return app
 
 
-request_interceptors = set()
+request_interceptors: Set[Callable[[Request], Request]] = set()
 
 
-def register_request_interceptor(interceptor):
+def register_request_interceptor(interceptor: Callable[[Request], Request]):
     request_interceptors.add(interceptor)
 
 
@@ -122,9 +150,18 @@ class MapProxyApp(object):
     """
     The MapProxy WSGI application.
     """
+    handlers: Dict[str, Union[Server, OWSServer]]
+    base_config: Options
+    cors_origin: Union[str, Dict]
+
+
     handler_path_re = re.compile(r'^/(\w+)')
 
-    def __init__(self, services, base_config):
+    def __init__(
+            self,
+            services: Sequence[Union[Server, OWSServer]],
+            base_config: Options
+    ):
         self.handlers = {}
         self.base_config = base_config
         self.cors_origin = base_config.http.access_control_allow_origin

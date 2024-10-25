@@ -18,6 +18,7 @@ import sys
 import time
 
 from contextlib import contextmanager
+from typing import Protocol
 
 from mapproxy.util.lock import FileLock, cleanup_lockdir, DummyLock
 
@@ -95,6 +96,12 @@ REMOVE_ON_UNLOCK = True
 if sys.platform == 'win32':
     # windows does not handle this well
     REMOVE_ON_UNLOCK = False
+
+
+class TileLockerProtocol(Protocol):
+
+    def lock(self, tile):
+        ...
 
 
 class TileLocker(object):

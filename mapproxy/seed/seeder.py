@@ -14,6 +14,15 @@
 # limitations under the License.
 
 from __future__ import print_function, division
+from typing import (
+    Any,
+    Callable,
+    List,
+    Optional,
+    Protocol,
+    Tuple,
+    Type,
+)
 
 import sys
 from collections import deque
@@ -25,12 +34,19 @@ try:
 except ImportError:
     import queue as Queue
 
-from mapproxy.config import base_config
+from mapproxy.cache.tile import TileManager
+from mapproxy.config import (
+    base_config,
+    Options,
+)
 from mapproxy.grid import MetaGrid
 from mapproxy.source import SourceError
 from mapproxy.config import local_base_config
 from mapproxy.util.lock import LockTimeout
-from mapproxy.seed.util import format_seed_task
+from mapproxy.seed.util import (
+    format_seed_task,
+    ProgressLog,
+)
 from mapproxy.seed.cachelock import DummyCacheLocker, CacheLockedError
 
 from mapproxy.seed.util import (exp_backoff, limit_sub_bbox,
@@ -59,12 +75,66 @@ else:
     queue_class = multiprocessing.Queue
 
 
+class TileQueueProtocol(Protocol):
+
+    def __init__(self, maxsize: int = 0):
+        ...
+
+    def qsize(self) -> int:
+        ...
+
+    def empty(self) -> bool:
+        ...
+
+    def full(self) -> bool:
+        ...
+
+    def put(self, item: Any, block: bool = True, timeout: Optional[float] = None) -> None:
+        ...
+
+    def put_nowait(self, item: Any):
+        ...
+
+    def get(self, block: bool = True, timeout: Optional[float] = None) -> Any:
+        ...
+
+    def get_nowait(self) -> Any:
+        ...
+
+
+class TaskProtocol(Protocol):
+    coverage: Callable
+    grid: Callable
+    levels: List
+    md: Any
+    tile_manager: TileManager
+
+    @property
+    def id(self) -> Tuple[str, str, str, Tuple]:
+        ...
+
+    def intersects(self, bbox) -> int:
+        ...
+
+
 class TileWorkerPool(object):
     """
     Manages multiple TileWorker.
     """
+    tiles_queue: TileQueueProtocol
+    task: TaskProtocol
+    dry_run: bool
+    procs: List["TileWorker"]
+    progress_logger: Optional[ProgressLog]
 
-    def __init__(self, task, worker_class, size=2, dry_run=False, progress_logger=None):
+    def __init__(
+            self,
+            task: TaskProtocol,
+            worker_class: Type["TileWorker"],
+            size: int = 2,
+            dry_run: bool = False,
+            progress_logger: Optional[ProgressLog] = None
+    ):
         self.tiles_queue = queue_class(size)
         self.task = task
         self.dry_run = dry_run
@@ -130,7 +200,17 @@ class TileWorkerPool(object):
 
 
 class TileWorker(proc_class):
-    def __init__(self, task, tiles_queue, conf):
+    task: TaskProtocol
+    tile_mgr: TileManager
+    tiles_queue: TileQueueProtocol
+    conf: Options
+
+    def __init__(
+            self,
+            task: TaskProtocol,
+            tiles_queue: TileQueueProtocol,
+            conf: Options,
+    ):
         proc_class.__init__(self)
         proc_class.daemon = True
         self.task = task

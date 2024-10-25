@@ -19,6 +19,11 @@ System-wide configuration.
 import os
 import copy
 import contextlib
+from typing import (
+    Any,
+    Dict,
+    Optional,
+)
 from mapproxy.util.yaml import load_yaml_file
 from mapproxy.util.ext.local import LocalStack
 
@@ -72,7 +77,7 @@ class Options(dict):
 _config = LocalStack()
 
 
-def base_config():
+def base_config() -> Options:
     """
     Returns the context-local system-wide configuration.
     """
@@ -89,7 +94,7 @@ def base_config():
 
 
 @contextlib.contextmanager
-def local_base_config(conf):
+def local_base_config(conf: Options):
     """
     Temporarily set the global configuration (mapproxy.config.base_config).
 
@@ -128,7 +133,7 @@ def abspath(path, base_path=None):
     return os.path.join(base_config().conf_base_dir, path)
 
 
-def finish_base_config(bc=None):
+def finish_base_config(bc=None) -> None:
     bc = bc or base_config()
     if 'srs' in bc:
         # build union of default axis_order_xx_ and the user configured axis_order_xx
@@ -182,7 +187,7 @@ def load_base_config(config_file=None, clear_existing=False):
     bc.conf_base_dir = conf_base_dir
 
 
-def load_default_config():
+def load_default_config() -> Options:
     from mapproxy.config import defaults
     config_dict = {}
     for k, v in defaults.__dict__.items():
@@ -195,7 +200,12 @@ def load_default_config():
     return default_conf
 
 
-def load_config(config, config_file=None, config_dict=None, clear_existing=False):
+def load_config(
+        config: Options,
+        config_file = None,
+        config_dict: Optional[Dict[str, Any]] = None,
+        clear_existing: bool = False
+) -> None:
     if clear_existing:
         for key in list(config.keys()):
             del config[key]

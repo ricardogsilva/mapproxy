@@ -19,10 +19,33 @@ Layers that can get maps/infos from different sources/caches.
 """
 
 from __future__ import division
-from mapproxy.grid import NoTiles, GridError, merge_resolution_range, bbox_intersects, bbox_contains
+
+from typing import (
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    Union,
+)
+
+from mapproxy.grid import (
+    NoTiles,
+    GridError,
+    ResolutionRange,
+    merge_resolution_range,
+    bbox_intersects,
+    bbox_contains,
+)
 from mapproxy.image import SubImageSource, bbox_position_in_image
 from mapproxy.image.opts import ImageOptions
 from mapproxy.image.tile import TiledImage
+from mapproxy.multiapp import DirectoryConfLoader
+from mapproxy.service.wms import (
+    WMSLayerBase,
+    WMSLayer,
+    WMSGroupLayer,
+)
 from mapproxy.srs import SRS, bbox_equals, merge_bbox, make_lin_transf, SupportedSRS
 from mapproxy.proj import ProjError
 
@@ -122,8 +145,24 @@ class MapQuery(object):
     Internal query for a map with a specific extent, size, srs, etc.
     """
 
-    def __init__(self, bbox, size, srs, format='image/png', transparent=False,
-                 tiled_only=False, dimensions=None):
+    bbox: str
+    size: str
+    srs: SRS
+    format: str
+    transparent: bool
+    tiled_only: bool
+    dimensions: Dict[str, str]
+
+    def __init__(
+            self,
+            bbox: str,
+            size: str,
+            srs: SRS,
+            format: str = 'image/png',
+            transparent: bool = False,
+            tiled_only: bool = False,
+            dimensions: Optional[Dict[str, str]] = None
+    ):
         self.bbox = bbox
         self.size = size
         self.srs = srs
@@ -132,7 +171,7 @@ class MapQuery(object):
         self.tiled_only = tiled_only
         self.dimensions = dimensions or {}
 
-    def dimensions_for_params(self, params):
+    def dimensions_for_params(self, params: Sequence[str]) -> Dict[str, str]:
         """
         Return subset of the dimensions.
 
@@ -203,9 +242,13 @@ class MapExtent(object):
     >>> [int(x) for x in me.bbox_for(SRS(4326))]
     [5, 45, 15, 55]
     """
+
+    bbox: Tuple[float, float, float, float]
+    srs: SRS
+
     is_default = False
 
-    def __init__(self, bbox, srs):
+    def __init__(self, bbox: Tuple[float, float, float, float], srs: SRS):
         self._llbbox = None
         self.bbox = bbox
         self.srs = srs
@@ -308,7 +351,7 @@ class DefaultMapExtent(MapExtent):
         MapExtent.__init__(self, (-180, -90, 180, 90), SRS(4326))
 
 
-def merge_layer_extents(layers):
+def merge_layer_extents(layers: List[Union[WMSLayer, WMSGroupLayer]]) -> MapExtent:
     if not layers:
         return DefaultMapExtent()
     layers = layers[:]
@@ -389,7 +432,9 @@ class DirectMapLayer(MapLayer):
         return self.source.get_map(query)
 
 
-def merge_layer_res_ranges(layers):
+def merge_layer_res_ranges(
+        layers: List[Union[WMSLayer, WMSGroupLayer]]
+) -> List[ResolutionRange]:
     ranges = [s.res_range for s in layers
               if hasattr(s, 'res_range')]
 

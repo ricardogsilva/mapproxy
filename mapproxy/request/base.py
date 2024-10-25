@@ -17,6 +17,11 @@
 Service requests (parsing, handling, etc).
 """
 from urllib.parse import parse_qsl, quote
+from typing import (
+    Any,
+    Dict,
+    Union, Optional,
+)
 
 from mapproxy.util.py import cached_property
 
@@ -164,8 +169,13 @@ class NoCaseMultiDict(dict):
         return '%s(%r)' % (self.__class__.__name__, tmp)
 
 
-def url_decode(qs, charset='utf-8', decode_keys=False, include_empty=True,
-               errors='ignore'):
+def url_decode(
+        qs: str,
+        charset: str = 'utf-8',
+        decode_keys: bool = False,
+        include_empty: bool = True,
+        errors: str = 'ignore'
+) -> NoCaseMultiDict:
     """
     Parse query string `qs` and return a `NoCaseMultiDict`.
     """
@@ -195,20 +205,20 @@ class Request(object):
                 environ['PATH_INFO'] = path_info[len(script_name):]
 
     @cached_property
-    def args(self):
+    def args(self) -> Union[NoCaseMultiDict[str, str], Dict[str, str]]:
         if self.environ.get('QUERY_STRING'):
             return url_decode(self.environ['QUERY_STRING'], self.charset)
         else:
             return {}
 
     @property
-    def path(self):
+    def path(self) -> str:
         path = self.environ.get('PATH_INFO', '')
         if path and isinstance(path, bytes):
             path = path.decode('utf-8')
         return path
 
-    def pop_path(self):
+    def pop_path(self) -> str:
         path = self.path.lstrip('/')
         if '/' in path:
             result, rest = path.split('/', 1)
@@ -221,7 +231,7 @@ class Request(object):
         return result
 
     @cached_property
-    def host(self):
+    def host(self) -> str:
         if 'HTTP_X_FORWARDED_HOST' in self.environ:
             # might be a list, return first host only
             host = self.environ['HTTP_X_FORWARDED_HOST']
@@ -241,37 +251,37 @@ class Request(object):
         return result
 
     @cached_property
-    def url_scheme(self):
+    def url_scheme(self) -> str:
         scheme = self.environ.get('HTTP_X_FORWARDED_PROTO')
         if not scheme:
             scheme = self.environ['wsgi.url_scheme']
         return scheme
 
     @cached_property
-    def host_url(self):
+    def host_url(self) -> str:
         return '%s://%s/' % (self.url_scheme, self.host)
 
     @cached_property
-    def server_url(self):
+    def server_url(self) -> str:
         return 'http://%s:%s/' % (
             self.environ['SERVER_NAME'],
             self.environ['SERVER_PORT']
         )
 
     @property
-    def script_url(self):
+    def script_url(self) -> str:
         "Full script URL without trailing /"
         return (self.host_url.rstrip('/') +
                 quote(self.environ.get('SCRIPT_NAME', '/').rstrip('/'))
                 )
 
     @property
-    def server_script_url(self):
+    def server_script_url(self) -> str:
         "Internal script URL"
         return self.server_url.rstrip('/')
 
     @property
-    def base_url(self):
+    def base_url(self) -> str:
         return (self.host_url.rstrip('/')
                 + quote(self.environ.get('SCRIPT_NAME', '').rstrip('/'))
                 + quote(self.environ.get('PATH_INFO', ''))
@@ -391,9 +401,21 @@ class BaseRequest(object):
     :param url: The service URL for the request.
     :param validate: True if the request should be validated after initialization.
     """
+    delimiter: str
+    http: Any
+    params: RequestParams
+    url: str
+
     request_params = RequestParams
 
-    def __init__(self, param=None, url='', validate=False, http=None, dimensions=None):
+    def __init__(
+            self,
+            param: Optional[Union[NoCaseMultiDict[str, str], Dict[str, str]]] = None,
+            url: str = '',
+            validate: bool = False,
+            http=None,
+            dimensions=None
+    ):
         self.delimiter = ','
         self.http = http
 
@@ -415,7 +437,7 @@ class BaseRequest(object):
         pass
 
     @property
-    def raw_params(self):
+    def raw_params(self) -> Dict[str, str]:
         params = {}
         for key, value in self.params.items():
             params[key] = value

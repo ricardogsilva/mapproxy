@@ -16,25 +16,55 @@
 """
 Configuration loading and system initializing.
 """
-from __future__ import division
-from mapproxy.util.fs import find_exec
-from mapproxy.util.yaml import load_yaml_file, YAMLError
-from mapproxy.util.ext.odict import odict
-from mapproxy.util.py import memoize
-from mapproxy.config.spec import validate_options, add_source_to_mapproxy_yaml_spec, add_service_to_mapproxy_yaml_spec
-from mapproxy.config.validator import validate
-from mapproxy.config import load_default_config, finish_base_config, defaults
-from mapproxy.service.ows import OWSServer
-
 import os
 import sys
 import hashlib
 import warnings
 from copy import deepcopy, copy
 from functools import partial
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Tuple,
+    Union,
+)
 
 import logging
+from __future__ import division
 from urllib.parse import urlparse
+
+from mapproxy.cache.base import TileCacheBase
+from mapproxy.cache.tile import Tile
+from mapproxy.config.spec import validate_options, add_source_to_mapproxy_yaml_spec, add_service_to_mapproxy_yaml_spec
+from mapproxy.config.validator import validate
+from mapproxy.config import (
+    load_default_config,
+    finish_base_config,
+    defaults,
+    Options,
+)
+from mapproxy.grid import TileGrid
+from mapproxy.image.opts import ImageOptions
+from mapproxy.request.wms import Version
+from mapproxy.service.base import Server
+from mapproxy.service.demo import DemoServer
+from mapproxy.service.kml import KMLServer
+from mapproxy.service.wms import WMSServer
+from mapproxy.service.wmts import WMTSServer, WMTSRestServer
+from mapproxy.service.tile import TileServer
+from mapproxy.srs import (
+    PreferredSrcSRS,
+    SRS,
+)
+from mapproxy.util.fs import find_exec
+from mapproxy.util.yaml import load_yaml_file, YAMLError
+from mapproxy.util.ext.odict import odict
+from mapproxy.util.py import memoize
+from mapproxy.service.ows import OWSServer
+from mapproxy.service.wms import WMSGroupLayer
 
 log = logging.getLogger('mapproxy.config')
 
@@ -44,7 +74,24 @@ class ConfigurationError(Exception):
 
 
 class ProxyConfiguration(object):
-    def __init__(self, conf, conf_base_dir=None, seed=False, renderd=False):
+    configuration: Dict[str, Any]
+    seed: bool
+    renderd: bool
+    globals: "GlobalConfiguration"
+    grids: Dict[str, "GridConfiguration"]
+    caches: odict[str, "CacheConfiguration"]
+    sources: "SourcesCollection"
+    wms_root_layer: Optional["WMSLayerConfiguration"]
+    layers: odict[str, "LayerConfiguration"]
+    services: "ServiceConfiguration"
+
+    def __init__(
+            self,
+            conf: Dict[str, Any],
+            conf_base_dir=None,
+            seed=False,
+            renderd=False
+    ):
         self.configuration = conf
         self.seed = seed
         self.renderd = renderd
@@ -227,7 +274,7 @@ class ProxyConfiguration(object):
         mapproxy.config.config._config.pop()
 
     @property
-    def base_config(self):
+    def base_config(self) -> Options:
         return self.globals.base_config
 
     def config_files(self):
@@ -256,9 +303,12 @@ class ConfigurationBase(object):
     """
     Base class for all configurations.
     """
+    conf: Dict[str, Any]
+    context: ProxyConfiguration
+
     defaults = {}
 
-    def __init__(self, conf, context):
+    def __init__(self, conf: Dict[str, Any], context: ProxyConfiguration):
         """
         :param conf: the configuration part for this configurator
         :param context: the complete proxy configuration
@@ -273,7 +323,7 @@ class ConfigurationBase(object):
 
 class GridConfiguration(ConfigurationBase):
     @memoize
-    def tile_grid(self):
+    def tile_grid(self) -> TileGrid:
         from mapproxy.grid import tile_grid
 
         if 'base' in self.conf:
@@ -327,8 +377,7 @@ class GridConfiguration(ConfigurationBase):
         return grid
 
 
-def preferred_srs(conf):
-    from mapproxy.srs import SRS, PreferredSrcSRS
+def preferred_srs(conf) -> Optional[PreferredSrcSRS]:
 
     preferred_conf = conf.get('preferred_src_proj', {})
 
@@ -344,6 +393,11 @@ def preferred_srs(conf):
 
 
 class GlobalConfiguration(ConfigurationBase):
+    base_config: Options
+    image_options: "ImageOptionsConfiguration"
+    preferred_srs: Optional[PreferredSrcSRS]
+    renderd_address: Optional[str]
+
     def __init__(self, conf_base_dir, conf, context):
         ConfigurationBase.__init__(self, conf, context)
         self.base_config = load_default_config()
@@ -364,7 +418,13 @@ class GlobalConfiguration(ConfigurationBase):
             else:
                 target[k] = v
 
-    def get_value(self, key, local={}, global_key=None, default_key=None):
+    def get_value(
+            self,
+            key: str,
+            local={},
+            global_key=None,
+            default_key=None
+    ) -> Optional[Any]:
         result = dotted_dict_get(key, local)
         if result is None:
             result = dotted_dict_get(global_key or key, self.conf)
@@ -434,8 +494,11 @@ class ImageOptionsConfiguration(ConfigurationBase):
         if options:
             raise ConfigurationError('unknown encoding_options: %r' % options)
 
-    def image_opts(self, image_conf, format):
-        from mapproxy.image.opts import ImageOptions
+    def image_opts(
+            self,
+            image_conf: Dict[str, Any],
+            format: Optional[str]
+    ) -> ImageOptions:
         if not image_conf:
             image_conf = {}
 
@@ -483,7 +546,10 @@ class ImageOptionsConfiguration(ConfigurationBase):
         return opts
 
 
-def dotted_dict_get(key, d):
+def dotted_dict_get(
+        key: str,
+        d: Optional[Dict[str, Any]]
+) -> Optional[Any]:
     """
     >>> dotted_dict_get('foo', {'foo': {'bar': 1}})
     {'bar': 1}
@@ -1410,7 +1476,7 @@ class CacheConfiguration(ConfigurationBase):
 
         raise ConfigurationError("compact cache only supports version 1 or 2")
 
-    def _tile_cache(self, grid_conf, image_opts):
+    def _tile_cache(self, grid_conf, image_opts) -> TileCacheBase:
         if self.conf.get('disable_storage', False):
             from mapproxy.cache.dummy import DummyCache
             return DummyCache()
@@ -1419,7 +1485,7 @@ class CacheConfiguration(ConfigurationBase):
         cache_type = self.conf.get('cache', {}).get('type', 'file')
         return getattr(self, '_%s_cache' % cache_type)(grid_conf, image_opts)
 
-    def _tile_filter(self):
+    def _tile_filter(self) -> List[Callable[[Tile], Tile]]:
         filters = []
         if 'watermark' in self.conf:
             from mapproxy.tilefilter import create_watermark_filter
@@ -1710,7 +1776,7 @@ class CacheConfiguration(ConfigurationBase):
         return caches
 
     @memoize
-    def grid_confs(self):
+    def grid_confs(self) -> List[Tuple[str, GridConfiguration]]:
         grid_names = self.conf.get('grids')
         if grid_names is None:
             log.warning(
@@ -1754,9 +1820,7 @@ class CacheConfiguration(ConfigurationBase):
 
 class WMSLayerConfiguration(ConfigurationBase):
     @memoize
-    def wms_layer(self):
-        from mapproxy.service.wms import WMSGroupLayer
-
+    def wms_layer(self) -> Optional[Union["LayerConfiguration", WMSGroupLayer]]:
         layers = []
         this_layer = None
 
@@ -2039,7 +2103,18 @@ class ServiceConfiguration(ConfigurationBase):
 
         ConfigurationBase.__init__(self, conf, context)
 
-    def services(self):
+    def services(self) -> List[
+        Union[
+            Server,
+            DemoServer,
+            KMLServer,
+            TileServer,
+            WMSServer,
+            WMTSServer,
+            WMTSRestServer,
+            OWSServer,
+        ]
+    ]:
         services = []
         ows_services = []
         for service_name, service_conf in self.conf.items():
@@ -2079,8 +2154,7 @@ class ServiceConfiguration(ConfigurationBase):
                     layers[tile_layer.md['name_internal']] = tile_layer
         return layers
 
-    def kml_service(self, conf):
-        from mapproxy.service.kml import KMLServer
+    def kml_service(self, conf) -> KMLServer:
 
         md = self.context.services.conf.get('wms', {}).get('md', {}).copy()
         md.update(conf.get('md', {}))
@@ -2090,9 +2164,7 @@ class ServiceConfiguration(ConfigurationBase):
         layers = self.tile_layers(conf, use_grid_names=use_grid_names)
         return KMLServer(layers, md, max_tile_age=max_tile_age, use_dimension_layers=use_grid_names)
 
-    def tms_service(self, conf):
-        from mapproxy.service.tile import TileServer
-
+    def tms_service(self, conf) -> TileServer:
         md = self.context.services.conf.get('wms', {}).get('md', {}).copy()
         md.update(conf.get('md', {}))
         max_tile_age = self.context.globals.get_value('tiles.expires_hours')
@@ -2104,7 +2176,7 @@ class ServiceConfiguration(ConfigurationBase):
         return TileServer(layers, md, max_tile_age=max_tile_age, use_dimension_layers=use_grid_names,
                           origin=origin)
 
-    def wmts_service(self, conf):
+    def wmts_service(self, conf) -> List[Union[WMTSServer, WMTSRestServer]]:
         from mapproxy.service.wmts import WMTSServer, WMTSRestServer
 
         md = self.context.services.conf.get('wms', {}).get('md', {}).copy()
@@ -2149,10 +2221,7 @@ class ServiceConfiguration(ConfigurationBase):
 
         return services
 
-    def wms_service(self, conf):
-        from mapproxy.service.wms import WMSServer
-        from mapproxy.request.wms import Version
-
+    def wms_service(self, conf: Dict[str, Any]) -> WMSServer:
         md = conf.get('md', {})
         inspire_md = conf.get('inspire_md', {})
         tile_layers = self.tile_layers(conf)
@@ -2195,20 +2264,29 @@ class ServiceConfiguration(ConfigurationBase):
         max_tile_age = self.context.globals.get_value('tiles.expires_hours')
         max_tile_age *= 60 * 60  # seconds
 
-        server = WMSServer(root_layer, md, attribution=attribution,
-                           image_formats=image_formats, info_types=info_types,
-                           srs=srs, tile_layers=tile_layers, strict=strict, on_error=on_source_errors,
-                           concurrent_layer_renderer=concurrent_layer_renderer,
-                           max_output_pixels=max_output_pixels, srs_extents=srs_extents,
-                           max_tile_age=max_tile_age, versions=versions,
-                           inspire_md=inspire_md,
-                           )
+        server = WMSServer(
+            root_layer,
+            md,
+            attribution=attribution,
+            image_formats=image_formats,
+            info_types=info_types,
+            srs=srs,
+            tile_layers=tile_layers,
+            strict=strict,
+            on_error=on_source_errors,
+            concurrent_layer_renderer=concurrent_layer_renderer,
+            max_output_pixels=max_output_pixels,
+            srs_extents=srs_extents,
+            max_tile_age=max_tile_age,
+            versions=versions,
+            inspire_md=inspire_md,
+        )
 
         server.fi_transformers = fi_xslt_transformers(conf, self.context)
 
         return server
 
-    def demo_service(self, conf):
+    def demo_service(self, conf) -> DemoServer:
         from mapproxy.service.demo import DemoServer
         services = list(self.context.services.conf.keys())
         md = self.context.services.conf.get('wms', {}).get('md', {}).copy()
@@ -2272,7 +2350,12 @@ def load_plugins():
                 ep.load().plugin_entrypoint()
 
 
-def load_configuration(mapproxy_conf, seed=False, ignore_warnings=True, renderd=False):
+def load_configuration(
+        mapproxy_conf: Optional[str],
+        seed: bool = False,
+        ignore_warnings: bool = True,
+        renderd: bool = False
+) -> ProxyConfiguration:
 
     load_plugins()
 

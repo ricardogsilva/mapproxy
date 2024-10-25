@@ -36,19 +36,43 @@ Tile caching (creation, caching and retrieval of tiles).
 """
 from functools import partial
 from contextlib import contextmanager
-from mapproxy.grid import MetaGrid
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+    Union,
+)
+from mapproxy.cache.base import (
+    TileCacheBase,
+    TileLockerProtocol,
+)
+from mapproxy.grid import (
+    MetaGrid,
+    TileGrid,
+)
 from mapproxy.image import BlankImageSource
 from mapproxy.image.mask import mask_image_source_from_coverage
 from mapproxy.image.opts import ImageOptions
 from mapproxy.image.merge import merge_images
 from mapproxy.image.tile import TileSplitter, TiledImage
-from mapproxy.layer import MapQuery, BlankImage
+from mapproxy.layer import (
+    BlankImage,
+    MapLayer,
+    MapQuery,
+)
 from mapproxy.source import SourceError, DummySource
 from mapproxy.util import async_
 from mapproxy.util.py import reraise, reraise_exception
 import sys
 import logging
 log = logging.getLogger('mapproxy.cache.tile')
+
+TileCoord = Tuple[float, float, float]
 
 
 class TileManager(object):
@@ -62,14 +86,50 @@ class TileManager(object):
         return this or a new tile object.
     """
 
-    def __init__(self, grid, cache, sources, format, locker, image_opts=None, request_format=None,
-                 meta_buffer=None, meta_size=None, minimize_meta_requests=False, identifier=None,
-                 pre_store_filter=None, concurrent_tile_creators=1, tile_creator_class=None,
-                 bulk_meta_tiles=False,
-                 rescale_tiles=0,
-                 cache_rescaled_tiles=False,
-                 dimensions=None
-                 ):
+    grid: TileGrid
+    cache: TileCacheBase
+    sources: List[MapLayer]
+    format: str
+    locker: TileLockerProtocol
+    identifier: str
+    meta_grid: MetaGrid
+    image_opts: Optional[ImageOptions]
+    request_format: str
+    minimize_meta_requests: bool
+    _expire_timestamp: Optional[Any]
+    _refresh_before: Dict[Any, Any]
+    pre_store_filter: List[Callable[["Tile"], "Tile"]]
+    concurrent_tile_creators: int
+    tile_creator_class: Union[Type["TileCreator"], partial["TileCreator"]]
+    dimensions: Optional[Any]
+    rescale_tiles: int
+    cache_rescaled_tiles: Optional[bool]
+
+    def __init__(
+            self,
+            grid: TileGrid,
+            cache: TileCacheBase,
+            sources: List[MapLayer],
+            format: str,
+            locker: TileLockerProtocol,
+            image_opts: Optional[ImageOptions] = None,
+            request_format: Optional[str] = None,
+            meta_buffer: Optional[float] = None,
+            meta_size: Optional[List[float]] = None,
+            minimize_meta_requests: bool = False,
+            identifier: Optional[str] = None,
+            pre_store_filter: Optional[List[Callable[["Tile"], "Tile"]]] = None,
+            concurrent_tile_creators: int = 1,
+            tile_creator_class: Optional[
+                Union[
+                    Type["TileCreator"],
+                    partial["TileCreator"]],
+            ] = None,
+            bulk_meta_tiles: Optional[bool] = False,
+            rescale_tiles: int = 0,
+            cache_rescaled_tiles: Optional[bool] = False,
+            dimensions: Optional = None
+    ):
         self.grid = grid
         self.cache = cache
         self.locker = locker
@@ -123,7 +183,12 @@ class TileManager(object):
             [tile_coord], dimensions=dimensions, with_metadata=with_metadata,
         )[0]
 
-    def load_tile_coords(self, tile_coords, dimensions=None, with_metadata=False):
+    def load_tile_coords(
+            self,
+            tile_coords: Sequence[TileCoord],
+            dimensions=None,
+            with_metadata=False
+    ):
         tiles = TileCollection(tile_coords)
         rescale_till_zoom = 0
         if self.rescale_tiles:
@@ -178,9 +243,14 @@ class TileManager(object):
             # missing or staled
             return not self.is_cached(tile, dimensions=dimensions)
 
-    def _load_tile_coords(self, tiles, dimensions=None, with_metadata=False,
-                          rescale_till_zoom=None, rescaled_tiles=None
-                          ):
+    def _load_tile_coords(
+            self,
+            tiles: "TileCollection",
+            dimensions=None,
+            with_metadata=False,
+            rescale_till_zoom=None,
+            rescaled_tiles=None
+    ):
         uncached_tiles = []
 
         if rescaled_tiles:
@@ -575,7 +645,16 @@ class Tile(object):
     :type source: ImageSource
     """
 
-    def __init__(self, coord, source=None, cacheable=True):
+    coord: Optional[TileCoord]
+    source: Optional[Any]
+    location: Optional[str]
+    stored: bool
+    _cacheable: bool
+    cacheable: "CacheInfo"
+    size: Optional[float]
+    timestamp: Optional[str]
+
+    def __init__(self, coord: Optional[TileCoord], source=None, cacheable=True):
         self.coord = coord
         self.source = source
         self.location = None
@@ -671,20 +750,29 @@ class CacheInfo(object):
 
 
 class TileCollection(object):
-    def __init__(self, tile_coords):
+    tiles: List[Tile]
+    tiles_dict: Dict[TileCoord, Tile]
+
+    def __init__(self, tile_coords: Sequence[Optional[TileCoord]]):
         self.tiles = [Tile(coord) for coord in tile_coords]
         self.tiles_dict = {}
         for tile in self.tiles:
             self.tiles_dict[tile.coord] = tile
 
-    def __getitem__(self, idx_or_coord):
+    def __getitem__(
+            self,
+            idx_or_coord: Union[int, TileCoord]
+    ) -> Tile:
         if isinstance(idx_or_coord, int):
             return self.tiles[idx_or_coord]
         if idx_or_coord in self.tiles_dict:
             return self.tiles_dict[idx_or_coord]
         return Tile(idx_or_coord)
 
-    def __contains__(self, tile_or_coord):
+    def __contains__(
+            self,
+            tile_or_coord: Union[Tile, TileCoord]
+    ) -> bool:
         if isinstance(tile_or_coord, tuple):
             return tile_or_coord in self.tiles_dict
         if hasattr(tile_or_coord, 'coord'):

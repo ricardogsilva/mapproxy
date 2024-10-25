@@ -20,10 +20,19 @@ from functools import partial
 from html import escape
 from itertools import chain
 from math import sqrt
+from typing import (
+    Any,
+    Dict,
+    List,
+    Optional, Union,
+)
+
 from mapproxy.cache.tile import CacheInfo
 from mapproxy.featureinfo import combine_docs
+from mapproxy.grid import ResolutionRange
 from mapproxy.request.wms import (wms_request, WMS111LegendGraphicRequest,
-                                  mimetype_from_infotype, infotype_from_mimetype, switch_bbox_epsg_axis_order)
+                                  mimetype_from_infotype, infotype_from_mimetype, switch_bbox_epsg_axis_order,
+                                  WMSRequest, WMSMapRequest)
 from mapproxy.srs import SRS, TransformationError
 from mapproxy.service.base import Server
 from mapproxy.response import Response
@@ -54,6 +63,23 @@ class WMSServer(Server):
     service = 'wms'
     fi_transformers = None
 
+    request_parser: Any
+    root_layer: Any
+    layers: Any
+    tile_layers: Any
+    strict: bool
+    attribution: Optional[Any]
+    md: Any
+    on_error: str
+    concurrent_layer_renderer: int
+    image_formats: Any
+    info_types: Any
+    srs: Any
+    srs_extents: Any
+    max_output_pixels: Optional[Any]
+    max_tile_age: Optional[Any]
+    inspire_md: Optional[Any]
+
     def __init__(self, root_layer, md, srs, image_formats,
                  request_parser=None, tile_layers=None, attribution=None,
                  info_types=None, strict=False, on_error='raise',
@@ -80,11 +106,17 @@ class WMSServer(Server):
         self.max_tile_age = max_tile_age
         self.inspire_md = inspire_md
 
-    def map(self, map_request):
+    def map(self, map_request: WMSMapRequest):
         self.check_map_request(map_request)
 
         params = map_request.params
-        query = MapQuery(params.bbox, params.size, SRS(params.srs), params.format, dimensions=map_request.dimensions)
+        query = MapQuery(
+            params.bbox,
+            params.size,
+            SRS(params.srs),
+            params.format,
+            dimensions=map_request.dimensions
+        )
 
         if map_request.params.get('tiled', 'false').lower() == 'true':
             query.tiled_only = True
@@ -129,9 +161,13 @@ class WMSServer(Server):
                                           layers=render_layers)
 
         raise_source_errors = True if self.on_error == 'raise' else False
-        renderer = LayerRenderer(render_layers, query, map_request,
-                                 raise_source_errors=raise_source_errors,
-                                 concurrent_rendering=self.concurrent_layer_renderer)
+        renderer = LayerRenderer(
+            render_layers,
+            query,
+            map_request,
+            raise_source_errors=raise_source_errors,
+            concurrent_rendering=self.concurrent_layer_renderer
+        )
 
         merger = LayerMerger()
         renderer.render(merger)
@@ -264,7 +300,7 @@ class WMSServer(Server):
 
         return Response(resp, mimetype=mimetype)
 
-    def check_map_request(self, request):
+    def check_map_request(self, request: WMSMapRequest):
         if self.max_output_pixels and \
                 (request.params.size[0] * request.params.size[1]) > self.max_output_pixels:
             request.prevent_image_exception = True
@@ -350,7 +386,12 @@ class WMSServer(Server):
         else:
             return PERMIT_ALL_LAYERS, None
 
-    def filter_actual_layers(self, actual_layers, requested_layers, authorized_layers):
+    def filter_actual_layers(
+            self,
+            actual_layers: Dict[str, "WMSLayer"],
+            requested_layers: Dict[str, "WMSLayer"],
+            authorized_layers: Any
+    ) -> None:
         if authorized_layers is not PERMIT_ALL_LAYERS:
             requested_layer_names = set(requested_layers)
             for layer_name in actual_layers.keys():
@@ -713,11 +754,32 @@ class WMSLayer(WMSLayerBase):
 
     Combines map, info and legend sources with metadata.
     """
+    name: str
+    title: str
+    md: Dict[str, Any]
+    map_layers: Any
+    info_layers: Any
+    legend_layers: Any
+    extent: MapExtent
+    dimensions: Optional[Dict[str, str]]
+    res_range: Any
+    queryable: bool
+    has_legend: bool
+
     is_active = True
     layers = []
 
-    def __init__(self, name, title, map_layers, info_layers=[], legend_layers=[],
-                 res_range=None, md=None, dimensions=None):
+    def __init__(
+            self,
+            name: str,
+            title: str,
+            map_layers: List[Union["WMSLayer", "WMSGroupLayer"]],
+            info_layers=[],
+            legend_layers=[],
+            res_range: Optional[ResolutionRange] = None,
+            md: Optional[Dict[str, Any]] = None,
+            dimensions: Optional[Dict[str, str]] = None
+    ):
         self.name = name
         self.title = title
         self.md = md or {}
@@ -789,7 +851,24 @@ class WMSGroupLayer(WMSLayerBase):
     that represents this layer.
     """
 
-    def __init__(self, name, title, this, layers, md=None):
+    name: str
+    title: str
+    this: Any
+    md: Dict[str, Any]
+    layers: List[WMSLayerBase]
+    has_legend: bool
+    queryable: bool
+    extent: MapExtent
+    res_range: Any
+
+    def __init__(
+            self,
+            name: str,
+            title: str,
+            this: Any,
+            layers: list[WMSLayerBase],
+            md: Optional[Dict[str, Any]] = None
+    ):
         self.name = name
         self.title = title
         self.this = this

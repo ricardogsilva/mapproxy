@@ -18,10 +18,24 @@ Service requests (parsing, handling, etc).
 """
 import codecs
 import re
+from typing import (
+    Any,
+    Dict,
+    Optional,
+    Sequence,
+    Union,
+)
+
 from mapproxy.request.wms import exception
 from mapproxy.exception import RequestError
 from mapproxy.srs import SRS, make_lin_transf
-from mapproxy.request.base import RequestParams, BaseRequest, split_mime_type
+from mapproxy.request import Request
+from mapproxy.request.base import (
+    BaseRequest,
+    RequestParams,
+    NoCaseMultiDict,
+    split_mime_type,
+)
 
 
 import logging
@@ -154,7 +168,14 @@ class WMSRequest(BaseRequest):
     non_strict_params = set()
     xml_exception_handler = None
 
-    def __init__(self, param=None, url='', validate=False, non_strict=False, **kw):
+    def __init__(
+            self,
+            param: Optional[Union[NoCaseMultiDict[str, str], Dict[str, str]]] = None,
+            url: str = '',
+            validate: bool = False,
+            non_strict: bool = False,
+            **kw
+    ):
         self.non_strict = non_strict
         BaseRequest.__init__(self, param=param, url=url, validate=validate, **kw)
         self.adapt_to_111()
@@ -184,6 +205,10 @@ class WMSMapRequest(WMSRequest):
     :ivar fixed_params: parameters that are fixed for a request
     :ivar expected_param: required parameters, used for validating
     """
+
+    dimensions: Optional[Dict[str, str]]
+
+
     request_params = WMSMapRequestParams
     request_handler_name = 'map'
     fixed_params = {'request': 'GetMap', 'service': 'WMS'}
@@ -199,7 +224,10 @@ class WMSMapRequest(WMSRequest):
         WMSRequest.__init__(self, param=param, url=url, validate=validate,
                             non_strict=non_strict, **kw)
 
-    def _get_dimensions(self, param):
+    def _get_dimensions(
+            self,
+            param: Optional[Union[RequestParams, Dict]]
+    ) -> Optional[Dict[str, str]]:
         if param:
             regex = "(?i)%s%s" % (("^%s|" % self.dimension_prefix if self.dimension_prefix else ""),
                                   "^(%s)$" % "|".join(self.dimension_params))
@@ -679,7 +707,7 @@ request_mapping = {Version('1.0.0'): {'featureinfo': WMS100FeatureInfoRequest,
                    }
 
 
-def _parse_version(req):
+def _parse_version(req: Request) -> Optional[Version]:
     if 'version' in req.args:
         return Version(req.args['version'])
     if 'wmtver' in req.args:
@@ -688,7 +716,7 @@ def _parse_version(req):
     return None
 
 
-def _parse_request_type(req):
+def _parse_request_type(req: Request) -> Optional[str]:
     if 'request' in req.args:
         request_type = req.args['request'].lower()
         if request_type in ('getmap', 'map'):
@@ -705,7 +733,10 @@ def _parse_request_type(req):
         return None
 
 
-def negotiate_version(version, supported_versions=None):
+def negotiate_version(
+        version: Version,
+        supported_versions: Optional[Sequence[Version]] = None
+) -> Version:
     """
     >>> negotiate_version(Version('0.9.0'))
     Version('1.0.0')
@@ -736,7 +767,12 @@ def negotiate_version(version, supported_versions=None):
             return next_highest_version
 
 
-def wms_request(req, validate=True, strict=True, versions=None):
+def wms_request(
+        req: Request,
+        validate: bool = True,
+        strict: bool = True,
+        versions: Optional[Sequence[Version]] = None
+) -> WMSRequest:
     version = _parse_version(req)
     req_type = _parse_request_type(req)
 
@@ -763,8 +799,13 @@ def wms_request(req, validate=True, strict=True, versions=None):
         dummy_req = version_requests['map'](param=req.args, url=req.base_url,
                                             validate=False)
         raise RequestError("unknown WMS request type '%s'" % req_type, request=dummy_req)
-    return req_class(param=req.args, url=req.base_url, validate=True,
-                     non_strict=not strict, http=req)
+    return req_class(
+        param=req.args,
+        url=req.base_url,
+        validate=True,
+        non_strict=not strict,
+        http=req
+    )
 
 
 def create_request(req_data, param, req_type='map', version='1.1.1', abspath=None):

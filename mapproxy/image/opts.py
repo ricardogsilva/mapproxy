@@ -15,6 +15,9 @@
 # limitations under the License.
 
 import copy
+from typing import (
+    List,
+)
 
 
 class ImageOptions(object):
@@ -144,7 +147,7 @@ class ImageFormats(object):
         return opts
 
 
-def compatible_image_options(img_opts, base_opts=None):
+def compatible_image_options(img_opts: List, base_opts=None) -> ImageOptions:
     """
     Return ImageOptions that is compatible with all given `img_opts`.
 
